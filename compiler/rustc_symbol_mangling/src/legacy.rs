@@ -65,7 +65,7 @@ pub(super) fn mangle<'tcx>(
         )
         .unwrap();
 
-    if let ty::InstanceDef::VTableShim(..) = instance.def {
+    if let ty::InstanceDef::VTableShim{..} = instance.def {
         let _ = printer.write_str("{{vtable-shim}}");
     }
 

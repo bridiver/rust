@@ -273,6 +273,8 @@ fn vtable_entries<'tcx>(
                         tcx,
                         ty::ParamEnv::reveal_all(),
                         def_id,
+                        // TODO this might not be right for nested traits.
+                        existential_trait_ref,
                         substs,
                     )
                     .expect("resolution failed during building vtable representation");

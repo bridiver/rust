@@ -908,11 +908,13 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
             (args, None)
         };
 
+        let mut is_virtual = false;
         let mut copied_constant_arguments = vec![];
         'make_args: for (i, arg) in first_args.iter().enumerate() {
             let mut op = self.codegen_operand(bx, arg);
 
             if let (0, Some(ty::InstanceDef::Virtual(_, idx))) = (i, def) {
+                is_virtual = true;
                 match op.val {
                     Pair(data_ptr, meta) => {
                         // In the case of Rc<Self>, we need to explicitly pass a
@@ -1061,7 +1063,8 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
 
         // For backends that support CFI using type membership (i.e., testing whether a given
         // pointer is associated with a type identifier).
-        if bx.tcx().sess.is_sanitizer_cfi_enabled() && is_indirect_call {
+        // FIXME remove !is_virtual hack
+        if bx.tcx().sess.is_sanitizer_cfi_enabled() && is_indirect_call && !is_virtual {
             // Emit type metadata and checks.
             // FIXME(rcvalle): Add support for generalized identifiers.
             // FIXME(rcvalle): Create distinct unnamed MDNodes for internal identifiers.

@@ -384,7 +384,7 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
                 // caller_fn_abi is not relevant here, we interpret the arguments directly for each intrinsic.
                 M::call_intrinsic(self, instance, args, destination, target, unwind)
             }
-            ty::InstanceDef::VTableShim(..)
+            ty::InstanceDef::VTableShim{..}
             | ty::InstanceDef::ReifyShim(..)
             | ty::InstanceDef::ClosureOnceShim { .. }
             | ty::InstanceDef::FnPtrShim(..)
@@ -642,6 +642,7 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
                         tcx,
                         self.param_env,
                         def_id,
+                        ty::Binder::dummy(existential_trait_ref),
                         instance.substs.rebase_onto(tcx, trait_def_id, concrete_trait_ref.substs),
                     )
                     .unwrap();

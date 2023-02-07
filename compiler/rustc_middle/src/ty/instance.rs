@@ -48,7 +48,8 @@ pub enum InstanceDef<'tcx> {
     ///
     /// The generated shim will take `Self` via `*mut Self` - conceptually this is `&owned Self` -
     /// and dereference the argument to call the original function.
-    VTableShim(DefId),
+    ///FIXME: Update docs
+    VTableShim { def_id: DefId, etf: ty::PolyExistentialTraitRef<'tcx> },
 
     /// `fn()` pointer where the function itself cannot be turned into a pointer.
     ///
@@ -144,7 +145,7 @@ impl<'tcx> InstanceDef<'tcx> {
     pub fn def_id(self) -> DefId {
         match self {
             InstanceDef::Item(def) => def.did,
-            InstanceDef::VTableShim(def_id)
+            InstanceDef::VTableShim{def_id, ..}
             | InstanceDef::ReifyShim(def_id)
             | InstanceDef::FnPtrShim(def_id, _)
             | InstanceDef::Virtual(def_id, _)
@@ -160,7 +161,7 @@ impl<'tcx> InstanceDef<'tcx> {
         match self {
             ty::InstanceDef::Item(def) => Some(def.did),
             ty::InstanceDef::DropGlue(def_id, Some(_)) => Some(def_id),
-            InstanceDef::VTableShim(..)
+            InstanceDef::VTableShim{..}
             | InstanceDef::ReifyShim(..)
             | InstanceDef::FnPtrShim(..)
             | InstanceDef::Virtual(..)
@@ -175,7 +176,7 @@ impl<'tcx> InstanceDef<'tcx> {
     pub fn with_opt_param(self) -> ty::WithOptConstParam<DefId> {
         match self {
             InstanceDef::Item(def) => def,
-            InstanceDef::VTableShim(def_id)
+            InstanceDef::VTableShim{def_id, ..}
             | InstanceDef::ReifyShim(def_id)
             | InstanceDef::FnPtrShim(def_id, _)
             | InstanceDef::Virtual(def_id, _)
@@ -272,7 +273,7 @@ impl<'tcx> InstanceDef<'tcx> {
             | InstanceDef::Intrinsic(..)
             | InstanceDef::ReifyShim(..)
             | InstanceDef::Virtual(..)
-            | InstanceDef::VTableShim(..) => true,
+            | InstanceDef::VTableShim{..} => true,
         }
     }
 }
@@ -293,7 +294,7 @@ fn fmt_instance(
 
     match instance.def {
         InstanceDef::Item(_) => Ok(()),
-        InstanceDef::VTableShim(_) => write!(f, " - shim(vtable)"),
+        InstanceDef::VTableShim{..} => write!(f, " - shim(vtable)"),
         InstanceDef::ReifyShim(_) => write!(f, " - shim(reify)"),
         InstanceDef::Intrinsic(_) => write!(f, " - intrinsic"),
         InstanceDef::Virtual(_, num) => write!(f, " - virtual#{}", num),
@@ -456,6 +457,7 @@ impl<'tcx> Instance<'tcx> {
         tcx: TyCtxt<'tcx>,
         param_env: ty::ParamEnv<'tcx>,
         def_id: DefId,
+        etf: ty::PolyExistentialTraitRef<'tcx>,
         substs: SubstsRef<'tcx>,
     ) -> Option<Instance<'tcx>> {
         debug!("resolve_for_vtable(def_id={:?}, substs={:?})", def_id, substs);
@@ -463,9 +465,9 @@ impl<'tcx> Instance<'tcx> {
         let is_vtable_shim = !fn_sig.inputs().skip_binder().is_empty()
             && fn_sig.input(0).skip_binder().is_param(0)
             && tcx.generics_of(def_id).has_self;
-        if is_vtable_shim {
-            debug!(" => associated item with unsizeable self: Self");
-            Some(Instance { def: InstanceDef::VTableShim(def_id), substs })
+        let cfi_enabled = tcx.sess.is_sanitizer_kcfi_enabled() || tcx.sess.is_sanitizer_cfi_enabled();
+        if is_vtable_shim || cfi_enabled {
+            Some(Instance { def: InstanceDef::VTableShim {def_id, etf}, substs })
         } else {
             Instance::resolve(tcx, param_env, def_id, substs).ok().flatten().map(|mut resolved| {
                 match resolved.def {

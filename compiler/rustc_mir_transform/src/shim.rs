@@ -31,7 +31,7 @@ fn make_shim<'tcx>(tcx: TyCtxt<'tcx>, instance: ty::InstanceDef<'tcx>) -> Body<'
 
     let mut result = match instance {
         ty::InstanceDef::Item(..) => bug!("item {:?} passed to make_shim", instance),
-        ty::InstanceDef::VTableShim(def_id) => {
+        ty::InstanceDef::VTableShim{def_id, ..} => {
             build_call_shim(tcx, instance, Some(Adjustment::Deref), CallKind::Direct(def_id))
         }
         ty::InstanceDef::FnPtrShim(def_id, ty) => {
@@ -579,6 +579,26 @@ impl<'tcx> CloneShimBuilder<'tcx> {
     }
 }
 
+use ty::fold::{TypeFolder, TypeFoldable, TypeSuperFoldable};
+
+struct SelfReplacer<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    replace: Ty<'tcx>,
+}
+
+impl<'tcx> TypeFolder<'tcx> for SelfReplacer<'tcx> {
+    fn tcx(&self) -> TyCtxt<'tcx> {
+        self.tcx
+    }
+    fn fold_ty(&mut self, t: Ty<'tcx>) -> Ty<'tcx> {
+        if t == self.tcx().types.self_param {
+            self.replace
+        } else {
+            t.super_fold_with(self)
+        }
+    }
+}
+
 /// Builds a "call" shim for `instance`. The shim calls the function specified by `call_kind`,
 /// first adjusting its first argument according to `rcvr_adjustment`.
 #[instrument(level = "debug", skip(tcx), ret)]
@@ -637,12 +657,28 @@ fn build_call_shim<'tcx>(
 
     // FIXME(eddyb) avoid having this snippet both here and in
     // `Instance::fn_sig` (introduce `InstanceDef::fn_sig`?).
-    if let ty::InstanceDef::VTableShim(..) = instance {
+    // FIXME(maurer) the above fixme for eddyb probably means I need to duplicate my logic too or
+    // factor the existing code out first
+    if let ty::InstanceDef::VTableShim {etf, ..} = instance {
         // Modify fn(self, ...) to fn(self: *mut Self, ...)
         let mut inputs_and_output = sig.inputs_and_output.to_vec();
         let self_arg = &mut inputs_and_output[0];
-        debug_assert!(tcx.generics_of(def_id).has_self && *self_arg == tcx.types.self_param);
-        *self_arg = tcx.mk_mut_ptr(*self_arg);
+        debug_assert!(tcx.generics_of(def_id).has_self);
+        // We might be in here because CFI is on *or* because we need to deref self
+        if *self_arg == tcx.types.self_param {
+            *self_arg = tcx.mk_mut_ptr(*self_arg);
+        }
+        let cfi_enabled = tcx.sess.is_sanitizer_kcfi_enabled() || tcx.sess.is_sanitizer_cfi_enabled();
+        if cfi_enabled {
+            let trait_predicate: ty::PolyExistentialPredicate<'tcx> = etf.map_bound(ty::ExistentialPredicate::Trait);
+            let predicates = tcx.mk_poly_existential_predicates([trait_predicate].into_iter());
+            let region = tcx.mk_region(ty::RegionKind::ReStatic);
+            let new_self = tcx.mk_dynamic(predicates, region, ty::Dyn);
+            *self_arg = self_arg.fold_with(&mut SelfReplacer {
+                tcx,
+                replace: new_self,
+            });
+        }
         sig.inputs_and_output = tcx.mk_type_list(&inputs_and_output);
     }
 

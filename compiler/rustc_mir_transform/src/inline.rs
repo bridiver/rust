@@ -265,7 +265,7 @@ impl<'tcx> Inliner<'tcx> {
             // not get any optimizations run on it. Any subsequent inlining may cause cycles, but we
             // do not need to catch this here, we can wait until the inliner decides to continue
             // inlining a second time.
-            InstanceDef::VTableShim(_)
+            InstanceDef::VTableShim{..}
             | InstanceDef::ReifyShim(_)
             | InstanceDef::FnPtrShim(..)
             | InstanceDef::ClosureOnceShim { .. }
